@@ -202,3 +202,47 @@ def test_chained_matches(tmp_path: Path) -> None:
         max_proj_center_error=1e-4,
         num_obs_tolerance=0,
     )
+
+
+def test_with_pose_priors(tmp_path: Path) -> None:
+    pycolmap.set_random_seed(0)
+
+    database_path = tmp_path / "database.db"
+    image_path = tmp_path / "images"
+    image_path.mkdir()
+    output_path = tmp_path / "sparse"
+    output_path.mkdir()
+
+    with pycolmap.Database.open(database_path) as database:
+        synthetic_dataset_options = pycolmap.SyntheticDatasetOptions()
+        synthetic_dataset_options.num_cameras_per_rig = 1
+        synthetic_dataset_options.num_frames_per_rig = 5
+        synthetic_dataset_options.num_points3D = 60
+        synthetic_dataset_options.prior_position = True
+        gt_reconstruction = pycolmap.synthesize_dataset(
+            synthetic_dataset_options, database
+        )
+        metric_from_synth = pycolmap.Sim3d(
+            3.0, pycolmap.Rotation3d(), [10.0, -5.0, 2.0]
+        )
+        gt_reconstruction.transform(metric_from_synth)
+        for prior in database.read_all_pose_priors():
+            prior.position = metric_from_synth * prior.position
+            database.update_pose_prior(prior)
+
+    options = create_test_options()
+    options.use_prior_position = True
+    custom_incremental_pipeline.main(
+        database_path=database_path,
+        image_path=image_path,
+        output_path=output_path,
+        options=options,
+    )
+
+    computed = pycolmap.Reconstruction(output_path / "0")
+    assert computed.num_reg_images() == gt_reconstruction.num_reg_images()
+    for image_id, gt_image in gt_reconstruction.images.items():
+        err = computed.image(image_id).projection_center() - (
+            gt_image.projection_center()
+        )
+        assert float((err**2).sum() ** 0.5) < 1e-2

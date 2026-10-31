@@ -272,6 +272,10 @@ std::optional<BACovariance> EstimateBACovariance(
     const BACovarianceOptions& options,
     const Reconstruction& reconstruction,
     CeresBundleAdjuster& bundle_adjuster) {
+  THROW_CHECK(!bundle_adjuster.Options().ConstrainMetricScale())
+      << "EstimateBACovariance does not support bundle adjusters with "
+         "metric-scale priors because residuals are parameterized in an "
+         "internally normalized coordinate frame.";
   ceres::Problem& problem = *THROW_CHECK_NOTNULL(bundle_adjuster.Problem());
   return EstimateBACovarianceFromProblem(options, reconstruction, problem);
 }

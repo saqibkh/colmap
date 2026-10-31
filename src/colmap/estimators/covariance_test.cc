@@ -4,9 +4,11 @@
 
 #include "colmap/estimators/bundle_adjustment_ceres.h"
 #include "colmap/estimators/cost_functions/manifold.h"
+#include "colmap/scene/database_sqlite.h"
 #include "colmap/scene/reconstruction.h"
 #include "colmap/scene/synthetic.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 namespace colmap {
@@ -294,6 +296,38 @@ INSTANTIATE_TEST_SUITE_P(
           BACovarianceTestOptions test_options;
           return std::make_pair(options, test_options);
         }()));
+
+TEST(BACovariance, RejectsMetricScalePriors) {
+  Reconstruction reconstruction;
+  SyntheticDatasetOptions synthetic_options;
+  synthetic_options.num_rigs = 1;
+  synthetic_options.num_cameras_per_rig = 1;
+  synthetic_options.num_frames_per_rig = 4;
+  synthetic_options.num_points3D = 40;
+  synthetic_options.prior_position = true;
+  auto database = Database::Open(kInMemorySqliteDatabasePath);
+  SynthesizeDataset(synthetic_options, &reconstruction, database.get());
+
+  BundleAdjustmentConfig config;
+  for (const image_t image_id : reconstruction.RegImageIds()) {
+    config.AddImage(image_id);
+  }
+  BundleAdjustmentOptions ba_options;
+  ba_options.pose_prior.use_position = true;
+  BundleAdjustmentPriors priors;
+  priors.pose_priors = database->ReadAllPosePriors();
+  auto bundle_adjuster = CreateDefaultCeresBundleAdjuster(
+      ba_options, config, reconstruction, priors);
+  ASSERT_TRUE(bundle_adjuster->Solve()->IsSolutionUsable());
+
+  EXPECT_THAT(
+      [&]() {
+        EstimateBACovariance(
+            BACovarianceOptions(), reconstruction, *bundle_adjuster);
+      },
+      testing::ThrowsMessage<std::invalid_argument>(
+          testing::HasSubstr("metric-scale priors")));
+}
 
 }  // namespace
 }  // namespace colmap

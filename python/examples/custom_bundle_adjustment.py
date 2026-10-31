@@ -17,9 +17,13 @@ def solve_bundle_adjustment(
     reconstruction: pycolmap.Reconstruction,
     ba_options: pycolmap.BundleAdjustmentOptions,
     ba_config: pycolmap.BundleAdjustmentConfig,
+    priors: pycolmap.BundleAdjustmentPriors | None = None,
 ) -> pycolmap.BundleAdjustmentSummary:
     bundle_adjuster = pycolmap.create_default_bundle_adjuster(
-        ba_options, ba_config, reconstruction
+        ba_options,
+        ba_config,
+        reconstruction,
+        priors or pycolmap.BundleAdjustmentPriors(),
     )
     summary = bundle_adjuster.solve()
     # Alternatively, you can customize the existing Ceres problem or options as:
@@ -39,6 +43,7 @@ def adjust_global_bundle(
     mapper: pycolmap.IncrementalMapper,
     mapper_options: pycolmap.IncrementalMapperOptions,
     ba_options: pycolmap.BundleAdjustmentOptions,
+    priors: pycolmap.BundleAdjustmentPriors | None = None,
 ) -> bool:
     """Equivalent to mapper.adjust_global_bundle(...)"""
     reconstruction = mapper.reconstruction
@@ -83,14 +88,14 @@ def adjust_global_bundle(
     for camera_id in mapper_options.constant_cameras:
         ba_config.set_constant_cam_intrinsics(camera_id)
 
-    # TODO: Add python support for prior positions
     # Fixing the gauge with two cameras leads to a more stable optimization
-    # with fewer steps as compared to fixing three points.
+    # with fewer steps as compared to fixing three points. When sufficient
+    # position priors are active, create_default_bundle_adjuster overrides this.
     ba_config.fix_gauge(pycolmap.BundleAdjustmentGauge.TWO_CAMS_FROM_WORLD)
 
     # Run bundle adjustment
     summary = solve_bundle_adjustment(
-        reconstruction, custom_ba_options, ba_config
+        reconstruction, custom_ba_options, ba_config, priors
     )
     logging.info("Global Bundle Adjustment")
     logging.info(summary.brief_report())
@@ -105,6 +110,7 @@ def iterative_global_refinement(
     ba_options: pycolmap.BundleAdjustmentOptions,
     tri_options: pycolmap.IncrementalTriangulatorOptions,
     normalize_reconstruction: bool = True,
+    priors: pycolmap.BundleAdjustmentPriors | None = None,
 ) -> bool:
     """Equivalent to mapper.iterative_global_refinement(...)"""
     reconstruction = mapper.reconstruction
@@ -116,9 +122,11 @@ def iterative_global_refinement(
     for _ in range(max_num_refinements):
         num_observations = reconstruction.compute_num_observations()
         # mapper.adjust_global_bundle(mapper_options, ba_options)
-        if not adjust_global_bundle(mapper, mapper_options, ba_options):
+        if not adjust_global_bundle(
+            mapper, mapper_options, ba_options, priors=priors
+        ):
             return False
-        if normalize_reconstruction:
+        if normalize_reconstruction and not ba_options.constrain_metric_scale():
             reconstruction.normalize()
         num_changed_observations = mapper.complete_and_merge_tracks(tri_options)
         num_changed_observations += mapper.filter_points(mapper_options)
